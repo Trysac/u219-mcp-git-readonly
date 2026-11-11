@@ -1,30 +1,12 @@
 # Architecture
 
-## Overview
+`@trysac/mcp-git-readonly` consists of:
 
-`@trysac/mcp-git-readonly` is a small, dependency-free TypeScript library published to npm as ES modules with type
-declarations. Read-only MCP server for one git repository with log, diff and blame tools, argument-injection-safe refs and paths, no external diff drivers and capped output
+- **`GitRunner`** — an injectable abstraction that runs git commands and returns structured output. The default `nodeGitRunner` uses `child_process.spawn` without a shell.
+- **`createGitTools`** — builds the three tool functions, each validating inputs, constructing the fixed argument vector and parsing output.
+- **`createServer`** — wires the tools into an `McpServer` with read-only annotations.
+- **`run`** — CLI entry point that starts the stdio MCP server.
 
-## Modules
+Validation rules are centralized: refs match `[A-Za-z0-9._/@^~-]{1,200}` with additional prohibitions; paths are relative, ≤1024 characters, contain no `..` or empty segments and cannot start with `:`.
 
-| Module | Responsibility |
-|---|---|
-| `src/index.ts` | Public API. Everything consumers import is exported from here. |
-
-Add a row when you add a module. Internal modules are not re-exported unless they are part of the public API.
-
-## Boundaries
-
-- No runtime dependencies by default; any addition is justified in [STACK.md](STACK.md).
-- No I/O at import time. Functions are pure unless their documentation says otherwise.
-- Errors are thrown as built-in error types (`TypeError`, `RangeError`) with actionable messages.
-
-## Build and distribution
-
-`npm run build` compiles `src/` to `dist/` with `tsconfig.build.json`. Only `dist/` is published
-(`files` in `package.json`).
-
-## Decisions
-
-Architectural decisions are recorded in [decisions/](decisions/), starting with
-[0001](decisions/0001-record-architecture-decisions.md).
+Output truncation happens at the runner level before parsing; incomplete log records are discarded.
