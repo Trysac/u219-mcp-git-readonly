@@ -2,36 +2,29 @@
 
 ## Tools
 
-- [Vitest](https://vitest.dev/) runs the suites in `test/`.
-- Coverage is collected with V8 (`@vitest/coverage-v8`) over `src/`.
+- Vitest runs the suite in `test/index.test.ts`.
+- The test file imports the public API from `../src/index.js`, mocks `node:child_process` with `vi.mock`, and uses `@modelcontextprotocol/sdk` `Client` with `InMemoryTransport.createLinkedPair()` for server tests. `StdioServerTransport` is mocked for the `run` CLI tests.
 
 ## Commands
 
 ```sh
-npm test            # vitest run --coverage
-npx vitest          # watch mode while developing
-npm run check       # every gate, including tests
+npx vitest run test/index.test.ts
+npx vitest test/index.test.ts
 ```
 
 ## Rules
 
-- Coverage must stay at or above 80 % for lines, branches, functions and statements (`vitest.config.ts`).
-  Lowering the thresholds is not allowed.
-- Test through the public entry point (`src/index.ts`) and assert observable behavior: return values,
-  thrown errors and their messages.
-- Each bug fix adds a test that fails without the fix.
-- Tests are deterministic: no network, no real clock or randomness without injection, no shared state between
-  tests. Temporary files go to the OS temp directory and are removed by the test.
+- Tests go through `src/index.ts` and assert observable behavior: return values, exact git argument vectors, environment flags, thrown error codes/messages, MCP tool results and CLI return codes.
+- Validation tests assert that invalid refs, paths and `maxCount` values never call the runner.
+- Mock runners are used for tool-level behavior; `nodeGitRunner` is tested separately with a mocked child process, including stdout/stderr bounding, UTF-8 truncation lookahead, spawn errors and timeout killing.
+- Edge cases covered include an empty log, refs with `^` and `~`, paths with spaces, non-ASCII blame authors, binary diff text, UTF-8-boundary truncation and malformed or truncated log records.
+- Server tests assert that `tools/list` returns exactly `git_blame`, `git_diff` and `git_log`, each with `annotations.readOnlyHint: true` and `openWorldHint: false`, and that errors are returned with `isError: true`.
+- Tests are deterministic: no real git process, network or filesystem repository is required; fake timers are used for the timeout test.
 
 ## Tiers
 
-- Local tier (every gate run, coverage measured here): unit and property tests, plus conformance on small
-  fixtures kept in the repository.
-- CI tier: conformance that needs an external tool or a download. Name them `test/<name>.conformance.test.ts`; `vitest.config.ts` excludes them locally
-  (unless `FABRICA_CI=1`). The CI `conformance` job sets `FABRICA_CI=1` and runs the full suite. Tools are installed
-  by the optional `ci/conformance-setup.sh` (bash, CI only; verify every download against a pinned SHA-256), and
-  tagged tests skip cleanly when their tool is missing.
+All tests are in the single Vitest suite `test/index.test.ts`. The supplied code has no separate conformance tier, external-tool setup or CI-only test file.
 
 ## Reports
 
-Coverage reports are written to `coverage/` (text summary and `lcov`). The folder is ignored by git.
+Vitest reports pass/fail to the console. The test file does not write coverage or other report artifacts.
