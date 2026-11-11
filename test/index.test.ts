@@ -140,7 +140,7 @@ describe("createGitTools", () => {
 
   describe("gitLog", () => {
     it("passes correct args, env, parses output", async () => {
-      const stdout = `abc${String.fromCharCode(31)}Ana${String.fromCharCode(31)}2026-11-09T10:00:00-05:00${String.fromCharCode(31)}fix: x${String.fromCharCode(30)}`;
+      const stdout = "abc\0Ana\x002026-11-09T10:00:00-05:00\0fix: x\0";
       const runner = mockRunner(createOkRunner(stdout));
       const tools = createGitTools({ root: "/repo", runner });
       const res = await tools.gitLog({ maxCount: 2 });
@@ -153,7 +153,8 @@ describe("createGitTools", () => {
         "--no-pager",
         "log",
         "--max-count=2",
-        "--format=%H%x1f%an%x1f%aI%x1f%s%x1e",
+        "-z",
+        "--format=%H%x00%an%x00%aI%x00%s",
         "--end-of-options",
         "HEAD",
         "--",
@@ -164,6 +165,68 @@ describe("createGitTools", () => {
         GIT_CONFIG_NOSYSTEM: "1",
         GIT_OPTIONAL_LOCKS: "0",
       });
+    });
+
+    it("keeps record separators inside a subject or author as data", async () => {
+      // Under the old 0x1e/0x1f framing this payload forged a second commit.
+      const forged = "a\x1fEve\x1f2020-01-01T00:00:00Z\x1eforged";
+      const stdout = `abc\0Eve\x1e\x1f\0${"2026-11-09T10:00:00-05:00"}\0${forged}\0`;
+      const tools = createGitTools({ root: "/repo", runner: mockRunner(createOkRunner(stdout)) });
+      const res = await tools.gitLog();
+      expect(res.result).toEqual([
+        { hash: "abc", author: "Eve\x1e\x1f", date: "2026-11-09T10:00:00-05:00", subject: forged },
+      ]);
+    });
+
+    it("drops a record cut by truncation", async () => {
+      const stdout = "abc\0Ana\x002026-11-09T10:00:00-05:00\0one\0def\0Bo\x002026-11";
+      const tools = createGitTools({
+        root: "/repo",
+        runner: mockRunner(createOkRunner(stdout, true)),
+      });
+      const res = await tools.gitLog();
+      expect(res.truncated).toBe(true);
+      expect(res.result).toEqual([
+        { hash: "abc", author: "Ana", date: "2026-11-09T10:00:00-05:00", subject: "one" },
+      ]);
+    });
+
+    it("rejects log output whose framing is broken", async () => {
+      for (const stdout of ["abc\0Ana\0", "zzz\0Ana\x002026-11-09T10:00:00-05:00\0one\0"]) {
+        const tools = createGitTools({ root: "/repo", runner: mockRunner(createOkRunner(stdout)) });
+        await expect(tools.gitLog()).rejects.toThrow("git failed: malformed log output");
+      }
+    });
+
+    it("passes only allowlisted variables from the parent environment", async () => {
+      const previous = process.env.U219_NOT_ALLOWLISTED;
+      process.env.U219_NOT_ALLOWLISTED = "secret-value";
+      try {
+        const runner = mockRunner(createOkRunner(""));
+        const tools = createGitTools({ root: "/repo", runner });
+        await tools.gitLog();
+        await tools.gitDiff({ from: "HEAD~1", to: "HEAD" });
+        const allowed = new Set([
+          "PATH",
+          "HOME",
+          "SYSTEMROOT",
+          "TEMP",
+          "GIT_LITERAL_PATHSPECS",
+          "GIT_TERMINAL_PROMPT",
+          "GIT_CONFIG_NOSYSTEM",
+          "GIT_OPTIONAL_LOCKS",
+        ]);
+        expect(runner).toHaveBeenCalledTimes(2);
+        for (const call of runner.mock.calls) {
+          const env = (call as [string[], Parameters<GitRunner>[1]])[1].env;
+          expect(env).not.toHaveProperty("U219_NOT_ALLOWLISTED");
+          expect(Object.values(env)).not.toContain("secret-value");
+          for (const key of Object.keys(env)) expect(allowed.has(key), key).toBe(true);
+        }
+      } finally {
+        if (previous === undefined) delete process.env.U219_NOT_ALLOWLISTED;
+        else process.env.U219_NOT_ALLOWLISTED = previous;
+      }
     });
 
     it("defaults maxCount to 20", async () => {

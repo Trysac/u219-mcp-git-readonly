@@ -3,10 +3,14 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 
-/** Separator between log records. */
-const RECORD_SEPARATOR = "\x1e";
-/** Separator between fields inside a log record. */
-const FIELD_SEPARATOR = "\x1f";
+/**
+ * Separator of `git log -z` output: it ends every field and every record. Git cannot emit NUL inside
+ * an author name or a subject, so unlike printable or control characters it cannot be forged by a
+ * crafted commit.
+ */
+const LOG_SEPARATOR = "\0";
+/** Fields per log record: hash, author, date, subject. */
+const LOG_FIELDS = 4;
 
 /** Default git process timeout in milliseconds. */
 export const DEFAULT_TIMEOUT_MS = 10_000;
@@ -274,29 +278,31 @@ export function createGitTools(opts: GitToolsOptions) {
     };
   };
 
-  /** Parses the custom log format used by this library. */
+  /**
+   * Parses `git log -z --format=%H%x00%an%x00%aI%x00%s`: every field is NUL-terminated, so the
+   * output is a flat list of fields read in groups of four. A group whose hash is not hexadecimal
+   * means the framing is broken, and parsing fails instead of returning shifted records.
+   */
   const parseLog = (stdout: Buffer, truncated: boolean): GitLogEntry[] => {
-    const text = stdout.toString("utf8");
-    const records = text.split(RECORD_SEPARATOR);
+    const fields = stdout.toString("utf8").split(LOG_SEPARATOR);
+    // The text after the last NUL is an unterminated (cut) field, or "" for complete output.
+    fields.pop();
+    const complete = fields.length - (fields.length % LOG_FIELDS);
+    if (complete !== fields.length && !truncated) {
+      throw new Error("git failed: malformed log output");
+    }
     const entries: GitLogEntry[] = [];
-    for (const record of records) {
-      if (record.length === 0) continue;
-      const fields = record.split(FIELD_SEPARATOR);
-      if (fields.length !== 4) continue; // Skip malformed records.
-      const [hash, author, date, subject] = fields;
-      if (
-        hash === undefined ||
-        author === undefined ||
-        date === undefined ||
-        subject === undefined
-      ) {
-        continue;
+    for (let i = 0; i < complete; i += LOG_FIELDS) {
+      const [hash, author, date, subject] = fields.slice(i, i + LOG_FIELDS) as [
+        string,
+        string,
+        string,
+        string,
+      ];
+      if (!/^[0-9a-f]+$/.test(hash)) {
+        throw new Error("git failed: malformed log output");
       }
       entries.push({ hash, author, date, subject });
-    }
-    // When truncated and the last record lacks its terminator, discard it.
-    if (truncated && !text.endsWith(RECORD_SEPARATOR) && entries.length > 0) {
-      entries.pop();
     }
     return entries;
   };
@@ -380,11 +386,12 @@ export function createGitTools(opts: GitToolsOptions) {
         );
       }
 
-      const format = "%H%x1f%an%x1f%aI%x1f%s%x1e";
+      const format = "%H%x00%an%x00%aI%x00%s";
       const args = [
         "--no-pager",
         "log",
         `--max-count=${maxCount}`,
+        "-z",
         `--format=${format}`,
         "--end-of-options",
         ref,
