@@ -1,6 +1,5 @@
 # @trysac/mcp-git-readonly
 
-[![npm](https://img.shields.io/npm/v/@trysac/mcp-git-readonly)](https://www.npmjs.com/package/@trysac/mcp-git-readonly)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 Read-only MCP server for a single git repository. It registers exactly three tools — `git_log`, `git_diff` and `git_blame` — with strict validation for refs and repository-relative paths, fixed git argument vectors, no shell, and bounded output. `git_log` and `git_blame` return parsed arrays; `git_diff` returns raw diff text.
@@ -15,9 +14,15 @@ Read-only MCP server for a single git repository. It registers exactly three too
 
 ## Installation
 
+Not published to npm yet. Build it from a clone, then install it from the local path:
+
 ```sh
-npm install @trysac/mcp-git-readonly
+git clone https://github.com/Trysac/u219-mcp-git-readonly.git
+cd u219-mcp-git-readonly && npm ci && npm run build
+cd ../your-project && npm install ../u219-mcp-git-readonly
 ```
+
+Imports keep the package name: `import { ... } from "@trysac/mcp-git-readonly"`.
 
 Requires Node.js 20+ and an ESM-capable runtime.
 
